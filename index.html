@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Czołgi</title>
+<meta property="og:title" content="Czołgi">
+<meta property="og:description" content="Prosta gra 3D: czołgi strzelają rakietami. 5 poziomów, sterowanie klawiaturą i dotykiem.">
+<meta property="og:image" content="https://raw.githubusercontent.com/mjwawa/ben_tanks/main/thumbnail.png">
+<meta name="twitter:card" content="summary_large_image">
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#222;font-family:system-ui,sans-serif;touch-action:none;user-select:none;-webkit-user-select:none}
   canvas{display:block}
@@ -23,16 +27,37 @@
   #start{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:18px;text-align:center}
   #start h1{font-size:64px;margin:0}
   #start button{font-size:40px;padding:18px 48px;border-radius:20px;border:0;background:#e8b923;color:#222;font-weight:800}
+  #loading{position:fixed;inset:0;z-index:50;background:#1b2418;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:22px;text-align:center;transition:opacity .5s}
+  #loading h1{font-size:54px;margin:0}
+  #loading .bar{width:min(420px,70vw);height:18px;border-radius:9px;background:rgba(255,255,255,.2);overflow:hidden}
+  #loading .bar i{display:block;height:100%;width:40%;border-radius:9px;background:#e8b923;animation:slide 1.2s ease-in-out infinite}
+  @keyframes slide{0%{margin-left:-40%}100%{margin-left:100%}}
+  #loading .tank{font-size:60px;animation:bob .6s ease-in-out infinite alternate}
+  @keyframes bob{to{transform:translateY(-8px)}}
+  #mini{position:fixed;top:12px;right:12px;width:160px;height:160px;border-radius:50%;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.5)}
+  #reload{position:fixed;left:50%;bottom:58px;width:min(260px,40vw);height:16px;margin-left:calc(min(260px,40vw)/-2);border-radius:8px;background:rgba(0,0,0,.45);border:2px solid rgba(255,255,255,.7);overflow:hidden;pointer-events:none}
+  #reload i{display:block;height:100%;width:0;background:#e8b923}
+  #reload.ready i{background:#6ed26e}
+  #reload b{position:absolute;inset:0;text-align:center;font-size:11px;line-height:16px;color:#fff;text-shadow:0 1px 2px #000;letter-spacing:1px}
+  #bF{background:conic-gradient(rgba(110,210,110,.75) calc(var(--p,1)*360deg), rgba(80,80,80,.55) 0)}
+  #bF.cool{border-color:#aaa}
 </style>
 </head>
 <body>
+<div id="loading"><div class="tank">🪖</div><h1>Ładowanie…</h1><div class="bar"><i></i></div><div id="loadNote" style="font-size:20px;opacity:.8">Przygotowuję czołgi i las</div></div>
 <div id="hud"></div>
+<canvas id="mini" width="320" height="320"></canvas>
+<div id="reload" class="ready"><i style="width:100%"></i><b>GOTOWE</b></div>
 <div id="msg"></div>
 <div id="help">Strzałki lub WASD = jazda &nbsp;•&nbsp; SPACJA = strzał rakietą</div>
 <div id="joyZone"></div><div id="joyBase"><div id="joyKnob"></div></div>
 <div class="btn" id="bF">🚀</div>
 <div id="start"><h1 id="sTitle">🪖 Czołgi</h1><div id="sText" style="font-size:26px">Zestrzel wszystkie wrogie czołgi rakietami!<br>Przejdź 5 poziomów.</div><button id="go">GRAJ</button></div>
 
+<script>
+// jeśli gra nie załaduje się w 15 s (np. brak internetu), pokaż komunikat zamiast wiecznego ładowania
+setTimeout(()=>{ if(!window.__ready){ const n=document.getElementById('loadNote'); n.innerHTML='Nie udało się załadować gry.<br>Sprawdź internet i odśwież stronę.'; n.style.color='#ffb3a8'; n.style.fontSize='26px'; document.querySelector('#loading h1').textContent='Ojej!'; document.querySelector('#loading .bar').style.display='none'; } },15000);
+</script>
 <script type="importmap">
 {"imports":{"three":"https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js"}}
 </script>
@@ -367,6 +392,7 @@ const whoosh = ()=>noise(.35, 2500, .35, 'bandpass');
 const G = 5;            // lekka grawitacja rakiet
 const SPEED = 55;
 const rockets = [], enemyRockets = [];
+const RELOAD = 1.2; // czas przeładowania po strzale (s)
 let cooldown = 0;
 let drive = 0;
 function makeRocket(color){
@@ -382,7 +408,7 @@ function makeRocket(color){
 const UP = new THREE.Vector3(0,1,0);
 function fire(){
   if(cooldown>0 || !started || transition) return;
-  cooldown = .6;
+  cooldown = RELOAD;
   let dir = new THREE.Vector3(Math.sin(P.h),0,Math.cos(P.h));
   const sy = player.position.y+2.1;
   const start = new THREE.Vector3(P.x,sy,P.z).addScaledVector(dir,4);
@@ -535,6 +561,39 @@ document.getElementById('go').onclick = ()=>{
 };
 
 // ---------- pętla ----------
+const reloadEl = document.getElementById('reload'), fireBtn = document.getElementById('bF');
+// minimapka: gracz w środku, mapa obraca się razem z nim (do przodu = w górę), wrogowie to czerwone kropki
+const mini = document.getElementById('mini'), mc = mini.getContext('2d');
+function drawMinimap(){
+  const S = 320, c = S/2, R = c-4, sc = R/95;
+  mc.clearRect(0,0,S,S);
+  mc.save(); mc.beginPath(); mc.arc(c,c,R,0,Math.PI*2); mc.clip();
+  mc.fillStyle = 'rgba(20,30,20,.6)'; mc.fillRect(0,0,S,S);
+  mc.strokeStyle = 'rgba(255,255,255,.18)'; mc.lineWidth = 2;
+  for(const r of [R/3,2*R/3]){ mc.beginPath(); mc.arc(c,c,r,0,Math.PI*2); mc.stroke(); }
+  const fx_=Math.sin(P.h), fz_=Math.cos(P.h), lx=Math.cos(P.h), lz=-Math.sin(P.h);
+  // brzeg mapy
+  mc.strokeStyle = 'rgba(255,200,80,.6)'; mc.lineWidth = 3; mc.beginPath();
+  [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx,sz],i)=>{
+    const dx=sx*WORLD-P.x, dz=sz*WORLD-P.z;
+    const px=c-(dx*lx+dz*lz)*sc, py=c-(dx*fx_+dz*fz_)*sc;
+    i?mc.lineTo(px,py):mc.moveTo(px,py);
+  }); mc.closePath(); mc.stroke();
+  // wrogowie
+  for(const e of enemies){
+    const dx=e.x-P.x, dz=e.z-P.z;
+    let u=-(dx*lx+dz*lz)*sc, v=-(dx*fx_+dz*fz_)*sc, d=Math.hypot(u,v), edge = d>R-14;
+    if(edge){ u*=(R-14)/d; v*=(R-14)/d; }
+    mc.fillStyle = edge ? 'rgba(255,90,70,.7)' : '#ff4a3a';
+    mc.strokeStyle = '#fff'; mc.lineWidth = 2;
+    mc.beginPath(); mc.arc(c+u,c+v,edge?7:10,0,Math.PI*2); mc.fill(); if(!edge) mc.stroke();
+  }
+  mc.restore();
+  // gracz (strzałka)
+  mc.fillStyle = '#7CFC7C'; mc.strokeStyle = '#fff'; mc.lineWidth = 2;
+  mc.beginPath(); mc.moveTo(c,c-16); mc.lineTo(c+11,c+12); mc.lineTo(c,c+6); mc.lineTo(c-11,c+12); mc.closePath(); mc.fill(); mc.stroke();
+  mc.strokeStyle = 'rgba(255,255,255,.8)'; mc.lineWidth = 4; mc.beginPath(); mc.arc(c,c,R,0,Math.PI*2); mc.stroke();
+}
 const clock = new THREE.Clock();
 const camPos = new THREE.Vector3(0,8,-13);
 const FWD = new THREE.Vector3();
@@ -624,11 +683,22 @@ function loop(){
   }
   camera.lookAt(P.x+FWD.x*12, player.position.y+1.5, P.z+FWD.z*12);
 
+  // przeładowanie
+  { const f = clamp(1-cooldown/RELOAD,0,1);
+    reloadEl.firstChild.style.width = (f*100)+'%';
+    reloadEl.classList.toggle('ready', f>=1);
+    reloadEl.lastChild.textContent = f>=1 ? 'GOTOWE' : 'ŁADUJĘ…';
+    fireBtn.style.setProperty('--p', f); fireBtn.classList.toggle('cool', f<1); }
+  drawMinimap();
+
   sun.position.set(P.x+60,90,P.z+30); sun.target.position.set(P.x,0,P.z);
   renderer.render(scene,camera);
 }
 buildLevel(0);
 loop();
+window.__ready = true;
+if(location.search.includes('autostart')) document.getElementById('go').click();
+{ const l = document.getElementById('loading'); l.style.opacity = 0; setTimeout(()=>l.remove(), 500); }
 </script>
 </body>
 </html>
