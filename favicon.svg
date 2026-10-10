@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9fc4de"/><stop offset="1" stop-color="#dfeaf0"/></linearGradient>
+    <linearGradient id="hull" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7a8c55"/><stop offset="1" stop-color="#4a5a33"/></linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+  <path d="M0 46 Q18 38 34 44 T64 42 V64 H0Z" fill="#5f7a3a"/>
+  <rect x="0" y="50" width="64" height="14" fill="#4f6830"/>
+  <!-- rakieta -->
+  <g transform="rotate(-8 50 24)">
+    <rect x="40" y="21" width="14" height="5" rx="2.5" fill="#f2f2ec"/>
+    <path d="M54 21 L61 23.5 L54 26Z" fill="#d8321f"/>
+    <path d="M40 21.5 L33 23.5 L40 25.5Z" fill="#ffb02e"/>
+    <path d="M40 22.5 L36 23.5 L40 24.5Z" fill="#fff3a0"/>
+  </g>
+  <!-- czołg -->
+  <rect x="9" y="40" width="40" height="12" rx="6" fill="#1f1f1f"/>
+  <g fill="#555"><circle cx="16" cy="46" r="3"/><circle cx="25" cy="46" r="3"/><circle cx="34" cy="46" r="3"/><circle cx="42" cy="46" r="3"/></g>
+  <rect x="12" y="33" width="34" height="10" rx="3" fill="url(#hull)"/>
+  <path d="M46 35 L52 41 L46 41Z" fill="#4a5a33"/>
+  <rect x="20" y="25" width="19" height="10" rx="4" fill="#6a7d47"/>
+  <rect x="37" y="28" width="15" height="3.6" rx="1.8" fill="#2a2a2a" transform="rotate(-8 37 30)"/>
+  <rect x="26" y="22.5" width="6" height="3" rx="1.5" fill="#2a2a2a"/>
+</svg>
