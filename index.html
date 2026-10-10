@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Czołgi</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#222;font-family:system-ui,sans-serif;touch-action:none;user-select:none;-webkit-user-select:none}
+  canvas{display:block}
+  #hud{position:fixed;top:12px;left:16px;color:#fff;font-size:30px;text-shadow:0 2px 6px #000;pointer-events:none;line-height:1.3}
+  #msg{position:fixed;top:28%;left:0;right:0;text-align:center;color:#ffe066;font-size:56px;font-weight:800;text-shadow:0 3px 10px #000;pointer-events:none;opacity:0;transition:opacity .4s;padding:0 12px}
+  #help{position:fixed;bottom:14px;left:0;right:0;text-align:center;color:#fff;font-size:20px;text-shadow:0 2px 6px #000;pointer-events:none}
+  .btn{position:fixed;display:none;width:84px;height:84px;border-radius:50%;background:rgba(255,255,255,.28);border:3px solid rgba(255,255,255,.7);color:#fff;font-size:38px;line-height:78px;text-align:center}
+  .btn.on{background:rgba(255,255,255,.6)}
+  .btn{z-index:5}
+  #joyZone{position:fixed;left:0;bottom:0;width:55%;height:65%;display:none;z-index:1}
+  #joyBase{position:fixed;left:40px;bottom:50px;width:170px;height:170px;border-radius:50%;background:rgba(255,255,255,.16);border:3px solid rgba(255,255,255,.5);display:none;pointer-events:none;box-sizing:border-box}
+  #joyKnob{position:absolute;left:50%;top:50%;width:80px;height:80px;margin:-40px 0 0 -40px;border-radius:50%;background:rgba(255,255,255,.55);border:3px solid rgba(255,255,255,.9);box-sizing:border-box}
+  .touch #joyZone,.touch #joyBase{display:block}
+  body{-webkit-touch-callout:none}
+  #bF{right:26px;bottom:50px;width:130px;height:130px;line-height:124px;font-size:56px;background:rgba(220,60,40,.5);border-color:#ffb3a8}
+  .touch .btn{display:block}.touch #help{display:none}
+  #start{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:18px;text-align:center}
+  #start h1{font-size:64px;margin:0}
+  #start button{font-size:40px;padding:18px 48px;border-radius:20px;border:0;background:#e8b923;color:#222;font-weight:800}
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<div id="msg"></div>
+<div id="help">Strzałki lub WASD = jazda &nbsp;•&nbsp; SPACJA = strzał rakietą</div>
+<div id="joyZone"></div><div id="joyBase"><div id="joyKnob"></div></div>
+<div class="btn" id="bF">🚀</div>
+<div id="start"><h1 id="sTitle">🪖 Czołgi</h1><div id="sText" style="font-size:26px">Zestrzel wszystkie wrogie czołgi rakietami!<br>Przejdź 5 poziomów.</div><button id="go">GRAJ</button></div>
+
+<script type="importmap">
+{"imports":{"three":"https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const rnd = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const wrap = a=>{while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;return a};
+const smooth = (a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)};
+
+// ---------- poziomy ----------
+const LEVELS = [
+  {name:'Zielona łąka',  sky:0xa9c4d6, base:'#5f6b3a', specks:['rgba(70,85,40,.35)','rgba(110,100,60,.3)','rgba(40,55,25,.3)'],   amp:2.5, enemies:3, move:0,   shoot:0,   theme:'grass'},
+  {name:'Pustynia',      sky:0xe8d3a8, base:'#b89a62', specks:['rgba(150,120,70,.35)','rgba(210,180,120,.3)','rgba(130,100,60,.3)'], amp:4,   enemies:4, move:2.5, shoot:0,   theme:'desert'},
+  {name:'Śnieżne góry',  sky:0xc9d6e0, base:'#dfe6ea', specks:['rgba(190,205,215,.4)','rgba(255,255,255,.4)','rgba(160,180,195,.3)'], amp:6,   enemies:5, move:3,   shoot:0,   theme:'snow'},
+  {name:'Zmierzch',      sky:0x6f6678, base:'#454538', specks:['rgba(30,35,25,.4)','rgba(80,75,55,.3)','rgba(20,25,20,.4)'],       amp:4.5, enemies:5, move:3,   shoot:6,   theme:'dark'},
+  {name:'Wielka bitwa',  sky:0x8a8a90, base:'#6b5a3a', specks:['rgba(90,70,40,.4)','rgba(120,105,70,.3)','rgba(60,50,30,.4)'],      amp:5,   enemies:7, move:3.5, shoot:4.5, theme:'mud'},
+];
+
+// ---------- scena ----------
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xa9c4d6);
+scene.fog = new THREE.Fog(0xa9c4d6, 60, 200);
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 400);
+
+scene.add(new THREE.HemisphereLight(0xdfeaff, 0x5a4a35, 0.9));
+const sun = new THREE.DirectionalLight(0xfff0d0, 2.2);
+sun.position.set(60,90,30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-60,right:60,top:60,bottom:-60,near:1,far:250});
+scene.add(sun, sun.target);
+
+addEventListener('resize',()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- teren ze wzgórzami ----------
+const WORLD = 110;
+let AMP = 2.5;
+function H(x,z){
+  const r = Math.hypot(x,z);
+  return AMP*(0.6*Math.sin(x*.035+1)*Math.cos(z*.03) + 0.4*Math.sin((x+z)*.06) + 0.25*Math.sin(x*.11)*Math.sin(z*.09)) * smooth(8,35,r);
+}
+function groundTexture(base, specks){
+  const c = document.createElement('canvas'); c.width = c.height = 512;
+  const g = c.getContext('2d');
+  g.fillStyle = base; g.fillRect(0,0,512,512);
+  for(let i=0;i<5000;i++){
+    g.fillStyle = specks[Math.floor(Math.random()*3)];
+    const s = 2+Math.random()*10;
+    g.fillRect(Math.random()*512, Math.random()*512, s, s);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(60,60);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const groundGeo = new THREE.PlaneGeometry(500,500,200,200);
+groundGeo.rotateX(-Math.PI/2);
+const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({roughness:1}));
+ground.receiveShadow = true;
+scene.add(ground);
+function rebuildGround(L){
+  AMP = L.amp;
+  const p = groundGeo.attributes.position;
+  for(let i=0;i<p.count;i++) p.setY(i, H(p.getX(i), p.getZ(i)));
+  p.needsUpdate = true; groundGeo.computeVertexNormals();
+  if(ground.material.map) ground.material.map.dispose();
+  ground.material.map = groundTexture(L.base, L.specks);
+  ground.material.needsUpdate = true;
+}
+
+// ---------- przeszkody ----------
+const props = new THREE.Group(); scene.add(props);
+let obstacles = [];
+function addTree(x,z,theme){
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.35,.5,3,8), new THREE.MeshStandardMaterial({color:0x5b4129,roughness:1}));
+  trunk.position.y = 1.5; trunk.castShadow = true; g.add(trunk);
+  const hue = theme==='dark' ? new THREE.Color().setHSL(.3,.3,rnd(.1,.15)) : theme==='snow' ? new THREE.Color().setHSL(.4,.2,rnd(.8,.92)) : new THREE.Color().setHSL(.27,.45,rnd(.2,.28));
+  const gm = new THREE.MeshStandardMaterial({color:hue,roughness:1,flatShading:true});
+  for(let i=0;i<3;i++){
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(2.6-i*.7, 3.2, 9), gm);
+    cone.position.y = 3.6+i*1.9; cone.castShadow = true; g.add(cone);
+  }
+  g.position.set(x,H(x,z),z); g.scale.setScalar(rnd(.9,1.5)); props.add(g);
+  obstacles.push({x,z,r:1.0*g.scale.x,mesh:g,tree:true});
+}
+function addCactus(x,z){
+  const g = new THREE.Group();
+  const m = new THREE.MeshStandardMaterial({color:0x4d7a3a,roughness:1,flatShading:true});
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(.5,.6,4,8), m); body.position.y = 2; body.castShadow = true; g.add(body);
+  for(const s of [-1,1]){
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,1.6,8), m); arm.position.set(s*.9,2.6,0); arm.castShadow = true; g.add(arm);
+    const up = new THREE.Mesh(new THREE.CylinderGeometry(.25,.3,1.2,8), m); up.position.set(s*1.25,3.3,0); up.castShadow = true; g.add(up);
+  }
+  g.position.set(x,H(x,z),z); g.scale.setScalar(rnd(.9,1.5)); g.rotation.y = rnd(0,6); props.add(g);
+  obstacles.push({x,z,r:1.1*g.scale.x,mesh:g,tree:true});
+}
+function addRock(x,z,theme){
+  const s = rnd(1.5,3.2);
+  const col = theme==='desert' ? 0xa58257 : theme==='snow' ? 0xa7aeb2 : theme==='mud' ? 0x6c6252 : 0x7d7a72;
+  const m = new THREE.Mesh(new THREE.DodecahedronGeometry(s,0), new THREE.MeshStandardMaterial({color:col,roughness:1,flatShading:true}));
+  m.position.set(x,H(x,z)+s*.45,z); m.rotation.set(rnd(0,3),rnd(0,3),rnd(0,3)); m.scale.y = .7;
+  m.castShadow = m.receiveShadow = true; props.add(m);
+  obstacles.push({x,z,r:s*.95});
+}
+function buildProps(L){
+  while(props.children.length) props.remove(props.children[0]);
+  obstacles = []; falling.length = 0;
+  for(let i=0;i<75;i++){
+    const x = rnd(-WORLD,WORLD), z = rnd(-WORLD,WORLD);
+    if(Math.hypot(x,z)<14) continue;
+    if(Math.random()<.4) addRock(x,z,L.theme);
+    else if(L.theme==='desert') addCactus(x,z);
+    else addTree(x,z,L.theme);
+  }
+}
+
+// ---------- padające drzewa ----------
+const falling = [];
+function fellTree(o, fromX, fromZ){
+  const i = obstacles.indexOf(o); if(i<0 || !o.tree) return;
+  obstacles.splice(i,1);
+  let dx=o.x-fromX, dz=o.z-fromZ; const d=Math.hypot(dx,dz)||1; dx/=d; dz/=d;
+  falling.push({mesh:o.mesh,base:o.mesh.quaternion.clone(),axis:new THREE.Vector3(dz,0,-dx),dx,dz,x:o.x,z:o.z,
+                ang:0,vel:.3,max:Math.PI/2*.97,landed:false,life:7});
+}
+function updateFalling(dt){
+  for(let i=falling.length-1;i>=0;i--){
+    const f = falling[i], m = f.mesh;
+    if(!f.landed){
+      f.vel += 5*dt*(1+f.ang);            // przyspiesza jak prawdziwe drzewo
+      f.ang += f.vel*dt;
+      if(f.ang>=f.max){
+        f.ang = f.max; f.landed = true; shake = Math.max(shake,.25);
+        const h = H(f.x+f.dx*4,f.z+f.dz*4);
+        for(let k=0;k<5;k++) puff(new THREE.Vector3(f.x+f.dx*rnd(2,7),h+.4,f.z+f.dz*rnd(2,7)), rnd(.8,1.4), 0x9a8a6a, .9, 2.5, 1);
+        noise(.4,300,.5);
+      }
+    } else {
+      f.life -= dt;
+      if(f.life<2) m.position.y -= dt*.8;      // na koniec zapada się w ziemię
+      if(f.life<=0){ props.remove(m); falling.splice(i,1); continue; }
+    }
+    m.quaternion.copy(f.base).premultiply(new THREE.Quaternion().setFromAxisAngle(f.axis,f.ang));
+  }
+}
+
+// ---------- czołg ----------
+function makeTank(hullColor, turretColor){
+  const g = new THREE.Group();
+  g.rotation.order = 'YXZ';
+  const hullM = new THREE.MeshStandardMaterial({color:hullColor, roughness:.75, metalness:.2});
+  const turM  = new THREE.MeshStandardMaterial({color:turretColor, roughness:.7, metalness:.25});
+  const dark  = new THREE.MeshStandardMaterial({color:0x242424, roughness:.9});
+  const add = (geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;g.add(m);return m};
+  add(new THREE.BoxGeometry(2.4,.9,4.2), hullM, 0,1.0,0);
+  const nose = add(new THREE.BoxGeometry(2.3,.5,1.2), hullM, 0,.95,2.4); nose.rotation.x = .35;
+  for(const s of [-1,1]){
+    add(new THREE.BoxGeometry(.7,.9,4.8), dark, s*1.5,.55,0);
+    for(let i=0;i<5;i++) add(new THREE.CylinderGeometry(.42,.42,.8,12), dark, s*1.5,.5,-1.8+i*.9).rotation.z = Math.PI/2;
+  }
+  const turret = new THREE.Group(); turret.position.set(0,1.75,-.2); g.add(turret);
+  const tm = new THREE.Mesh(new THREE.CylinderGeometry(1.0,1.2,.85,14), turM); tm.castShadow = true; turret.add(tm);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(.14,.18,3.4,10), dark);
+  barrel.rotation.x = Math.PI/2; barrel.position.set(0,.05,2.2); barrel.castShadow = true; turret.add(barrel);
+  const hatch = new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,.15,10), dark); hatch.position.set(-.3,.5,-.2); turret.add(hatch);
+  g.userData.turret = turret;
+  return g;
+}
+// ustawia czołg na terenie i przechyla go zgodnie ze zboczem
+function settle(obj, mesh, dt){
+  const fx=Math.sin(obj.h), fz=Math.cos(obj.h), lx=Math.cos(obj.h), lz=-Math.sin(obj.h); // przód, lewo
+  const hf=H(obj.x+fx*2.2,obj.z+fz*2.2), hb=H(obj.x-fx*2.2,obj.z-fz*2.2);
+  const hl=H(obj.x+lx*1.4,obj.z+lz*1.4), hr=H(obj.x-lx*1.4,obj.z-lz*1.4);
+  const k = Math.min(1,dt*8);
+  obj.pitch += (-Math.atan2(hf-hb,4.4) - obj.pitch)*k;
+  obj.roll  += ( Math.atan2(hl-hr,2.8) - obj.roll)*k;
+  mesh.position.set(obj.x, (hf+hb+hl+hr)/4, obj.z);
+  mesh.rotation.set(obj.pitch, obj.h, obj.roll);
+  return (hf-hb)/4.4; // nachylenie wzdłuż jazdy
+}
+
+const player = makeTank(0x4f5d3a, 0x5d6b45);
+scene.add(player);
+const P = {x:0,z:0,h:0,speed:0,vx:0,vz:0,pitch:0,roll:0};
+
+// ---------- wrogowie ----------
+let enemies = [];
+function spawnEnemies(L){
+  for(let i=0;i<L.enemies;i++){
+    let x,z,tries=0;
+    do{
+      const a = Math.random()*Math.PI*2, d = rnd(30,85);
+      x = P.x+Math.sin(a)*d; z = P.z+Math.cos(a)*d; tries++;
+    }while(tries<60 && (Math.abs(x)>WORLD||Math.abs(z)>WORLD||obstacles.some(o=>Math.hypot(o.x-x,o.z-z)<o.r+5)));
+    const t = makeTank(0x8a6a3a, 0x7a5c30);
+    const e = {mesh:t,x,z,h:rnd(0,6.28),r:2.4,phase:rnd(0,6),pitch:0,roll:0,wx:x,wz:z,cool:rnd(2,2+(L.shoot||3)),turY:0};
+    scene.add(t); enemies.push(e);
+    settle(e,t,1);
+  }
+}
+function killEnemy(e){
+  const i = enemies.indexOf(e); if(i<0) return;
+  enemies.splice(i,1); scene.remove(e.mesh);
+  const y = H(e.x,e.z);
+  // szczątki
+  for(let k=0;k<9;k++){
+    const m = new THREE.Mesh(new THREE.BoxGeometry(rnd(.4,1),rnd(.3,.7),rnd(.4,1)), new THREE.MeshStandardMaterial({color:k%3?0x4a3a22:0x222222,roughness:.9}));
+    m.position.set(e.x+rnd(-1,1),y+1.5,e.z+rnd(-1,1)); m.castShadow = true; scene.add(m);
+    debris.push({mesh:m,vx:rnd(-9,9),vy:rnd(8,18),vz:rnd(-9,9),sx:rnd(-6,6),sz:rnd(-6,6),life:3.5});
+  }
+  score++; updateHud();
+  if(enemies.length===0 && !transition){
+    transition = true;
+    const last = lvl>=LEVELS.length-1;
+    say(last ? 'Wygrałeś! 🏆' : 'Poziom ukończony! ⭐', 2400);
+    setTimeout(()=> last ? win() : nextLevel(), 2600);
+  }
+}
+
+// ---------- efekty ----------
+const fx = [];
+const debris = [];
+const smokeGeo = new THREE.SphereGeometry(.4,8,6);
+function puff(pos, size, color, life, grow=2.5, rise=0){
+  const m = new THREE.Mesh(smokeGeo, new THREE.MeshBasicMaterial({color,transparent:true,opacity:.8,depthWrite:false}));
+  m.position.copy(pos); m.scale.setScalar(size); scene.add(m);
+  fx.push({mesh:m,life,max:life,size,grow,rise});
+}
+let shake = 0;
+function blast(x,y,z,big){
+  const p = new THREE.Vector3(x,y,z), n = big?1:.5;
+  for(let i=0;i<14*n;i++){
+    const q = p.clone().add(new THREE.Vector3(rnd(-1.5,1.5),rnd(0,2),rnd(-1.5,1.5)));
+    puff(q, rnd(1.5,3), i%3?0xff9a2a:0xffdf6a, rnd(.5,.9), 1.8, 2);
+  }
+  for(let i=0;i<10*n;i++){
+    const q = p.clone().add(new THREE.Vector3(rnd(-2,2),rnd(1,3),rnd(-2,2)));
+    puff(q, rnd(2,3.5), 0x333333, rnd(1.2,2), 1.6, 3);
+  }
+  boom(big);
+  const d = Math.hypot(P.x-x,P.z-z);
+  shake = Math.max(shake, big ? clamp(1.2-d/60,0,1)*.7 : 0);
+}
+// wybuch rakiety gracza: fala uderzeniowa niszczy wrogów w promieniu
+function explodePlayerRocket(x,y,z){
+  blast(x,y,z,true);
+  for(const o of obstacles.slice()){ if(o.tree && Math.hypot(o.x-x,o.z-z) < o.r+4) fellTree(o,x,z); }
+  for(const e of enemies.slice()){
+    if(Math.hypot(e.x-x,e.z-z) < 4.8 && Math.abs(H(e.x,e.z)+1.5-y) < 5) killEnemy(e);
+  }
+}
+function updateFx(dt){
+  for(let i=fx.length-1;i>=0;i--){
+    const f = fx[i]; f.life -= dt;
+    const k = 1 - f.life/f.max;
+    f.mesh.scale.setScalar(f.size*(1+k*f.grow));
+    f.mesh.position.y += f.rise*dt;
+    f.mesh.material.opacity = Math.max(0,.8*(1-k));
+    if(f.life<=0){ scene.remove(f.mesh); f.mesh.material.dispose(); fx.splice(i,1); }
+  }
+  for(let i=debris.length-1;i>=0;i--){
+    const d = debris[i], m = d.mesh;
+    d.life -= dt; d.vy -= 24*dt;
+    m.position.x += d.vx*dt; m.position.y += d.vy*dt; m.position.z += d.vz*dt;
+    m.rotation.x += d.sx*dt; m.rotation.z += d.sz*dt;
+    const gy = H(m.position.x,m.position.z)+.25;
+    if(m.position.y<gy){ m.position.y = gy; d.vy = Math.abs(d.vy)*.35; d.vx*=.6; d.vz*=.6; d.sx*=.6; d.sz*=.6; }
+    if(d.life<1) m.scale.setScalar(Math.max(.01,d.life));
+    if(d.life<=0){ scene.remove(m); m.geometry.dispose(); m.material.dispose(); debris.splice(i,1); }
+  }
+}
+
+// ---------- dźwięk ----------
+let actx;
+function audio(){ if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)(); if(actx.state==='suspended') actx.resume(); return actx; }
+function noise(dur, freq, vol, type='lowpass'){
+  try{
+    const a = audio(), n = a.sampleRate*dur, buf = a.createBuffer(1,n,a.sampleRate), d = buf.getChannelData(0);
+    for(let i=0;i<n;i++) d[i] = (Math.random()*2-1)*(1-i/n);
+    const s = a.createBufferSource(); s.buffer = buf;
+    const f = a.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    const g = a.createGain(); g.gain.value = vol;
+    s.connect(f); f.connect(g); g.connect(a.destination); s.start();
+  }catch(e){}
+}
+// silnik: dwa niskie oscylatory przez filtr, wysokość i głośność zależą od prędkości
+let eng;
+function initEngine(){
+  if(eng) return;
+  try{
+    const a = audio();
+    const o1 = a.createOscillator(), o2 = a.createOscillator();
+    o1.type = 'sawtooth'; o2.type = 'square';
+    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 220; f.Q.value = 2;
+    const g = a.createGain(); g.gain.value = 0;
+    const lfo = a.createOscillator(), lg = a.createGain(); // „terkotanie” cylindrów
+    lfo.frequency.value = 14; lg.gain.value = 0.015;
+    lfo.connect(lg); lg.connect(g.gain);
+    o1.connect(f); o2.connect(f); f.connect(g); g.connect(a.destination);
+    o1.start(); o2.start(); lfo.start();
+    eng = {o1,o2,f,g,lfo};
+  }catch(e){}
+}
+function updateEngine(speed, throttle, on){
+  if(!eng) return;
+  const t = eng.g.context.currentTime, k = Math.min(1,Math.abs(speed)/14);
+  const base = 32 + k*38 + (throttle?10:0);
+  eng.o1.frequency.setTargetAtTime(base, t, .1);
+  eng.o2.frequency.setTargetAtTime(base*.5, t, .1);
+  eng.f.frequency.setTargetAtTime(160 + k*320 + (throttle?80:0), t, .1);
+  eng.g.gain.setTargetAtTime(on ? .035 + k*.025 + (throttle?.01:0) : 0, t, .15);
+  eng.lfo.frequency.setTargetAtTime(10 + k*18, t, .1);
+}
+const boom = big=>noise(big?1.1:.5, 500, big?.9:.4);
+const whoosh = ()=>noise(.35, 2500, .35, 'bandpass');
+
+// ---------- rakiety ----------
+const G = 5;            // lekka grawitacja rakiet
+const SPEED = 55;
+const rockets = [], enemyRockets = [];
+let cooldown = 0;
+let drive = 0;
+function makeRocket(color){
+  const r = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(.16,.16,1.4,8), new THREE.MeshStandardMaterial({color:0xd8d8d0,metalness:.5,roughness:.4}));
+  const tip  = new THREE.Mesh(new THREE.ConeGeometry(.16,.5,8), new THREE.MeshStandardMaterial({color}));
+  tip.position.y = .95;
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(.14,.7,8), new THREE.MeshBasicMaterial({color:0xffb030}));
+  flame.position.y = -1.0; flame.rotation.x = Math.PI;
+  r.add(body,tip,flame);
+  return r;
+}
+const UP = new THREE.Vector3(0,1,0);
+function fire(){
+  if(cooldown>0 || !started || transition) return;
+  cooldown = .6;
+  let dir = new THREE.Vector3(Math.sin(P.h),0,Math.cos(P.h));
+  const sy = player.position.y+2.1;
+  const start = new THREE.Vector3(P.x,sy,P.z).addScaledVector(dir,4);
+  // pomoc w celowaniu: jeśli wróg jest prawie na wprost, rakieta leci w niego (z poprawką na opadanie)
+  let best=null, bestA=.2, bestE=null;
+  for(const e of enemies){
+    const to = new THREE.Vector3(e.x-P.x,0,e.z-P.z), d = to.length();
+    if(d<6) continue;
+    const a = dir.angleTo(to.clone().normalize());
+    if(a<bestA){bestA=a;best=to.normalize();bestE=e;}
+  }
+  if(best) dir = best;
+  let vy = 2.2;
+  if(bestE){
+    const dist = Math.hypot(bestE.x-start.x,bestE.z-start.z), t = dist/SPEED;
+    vy = (H(bestE.x,bestE.z)+1.5-start.y)/t + .5*G*t;
+  }
+  const mesh = makeRocket(0xcc2b1e);
+  mesh.position.copy(start); scene.add(mesh);
+  rockets.push({mesh,vel:new THREE.Vector3(dir.x*SPEED,vy,dir.z*SPEED),life:3.2,t:0});
+  // odrzut
+  P.vx -= dir.x*5; P.vz -= dir.z*5; P.speed *= .8; shake = Math.max(shake,.15);
+  puff(start, .8, 0xdddddd, .5, 2.5);
+  whoosh();
+}
+function updateRockets(dt){
+  for(let i=rockets.length-1;i>=0;i--){
+    const r = rockets[i], p = r.mesh.position;
+    r.life -= dt; r.t += dt;
+    r.vel.y -= G*dt;
+    p.addScaledVector(r.vel, dt);
+    r.mesh.quaternion.setFromUnitVectors(UP, r.vel.clone().normalize());
+    if(r.t>.03){ r.t=0; puff(p.clone().addScaledVector(r.vel.clone().normalize(),-1), .5, 0xbbbbbb, .7, 2.2); }
+    let hit = r.life<=0 || p.y < H(p.x,p.z)+.2;
+    for(const e of enemies){
+      if(!hit && Math.hypot(e.x-p.x,e.z-p.z) < e.r+.6 && Math.abs(p.y-(H(e.x,e.z)+1.5)) < 2.6) hit = true;
+    }
+    for(const o of obstacles){ if(!hit && Math.hypot(o.x-p.x,o.z-p.z) < o.r+.3 && p.y < H(o.x,o.z)+6){ hit = true; if(o.tree) fellTree(o,p.x-r.vel.x,p.z-r.vel.z); } }
+    if(hit){ scene.remove(r.mesh); rockets.splice(i,1); explodePlayerRocket(p.x,p.y,p.z); }
+  }
+  for(let i=enemyRockets.length-1;i>=0;i--){
+    const r = enemyRockets[i], p = r.mesh.position;
+    r.life -= dt; r.t += dt;
+    p.addScaledVector(r.vel, dt);
+    if(r.t>.05){ r.t=0; puff(p.clone(), .45, 0xaa9988, .6, 2); }
+    let hit = r.life<=0 || p.y < H(p.x,p.z)+.2, hurt = false;
+    if(Math.hypot(P.x-p.x,P.z-p.z) < 2.6 && Math.abs(p.y-(player.position.y+1.4)) < 3){ hit = true; hurt = true; }
+    for(const o of obstacles){ if(!hit && Math.hypot(o.x-p.x,o.z-p.z) < o.r+.3 && p.y < H(o.x,o.z)+6){ hit = true; if(o.tree) fellTree(o,p.x-r.vel.x,p.z-r.vel.z); } }
+    if(hit){
+      scene.remove(r.mesh); enemyRockets.splice(i,1);
+      blast(p.x,p.y,p.z,false);
+      if(hurt){ // nikt nie przegrywa: tylko odrzuca czołg i trzęsie ekranem
+        const n = r.vel.clone().setY(0).normalize();
+        P.vx += n.x*14; P.vz += n.z*14; P.speed *= .3; shake = .8;
+        say('Auć! 💥', 900);
+      }
+    }
+  }
+}
+function enemyFire(e){
+  const from = new THREE.Vector3(e.x,H(e.x,e.z)+2.1,e.z);
+  const tgt = new THREE.Vector3(P.x+rnd(-3,3), player.position.y+1.5, P.z+rnd(-3,3));
+  const dir = tgt.sub(from).normalize();
+  from.addScaledVector(dir,4);
+  const mesh = makeRocket(0x2a2a2a); mesh.scale.setScalar(1.2);
+  mesh.position.copy(from); mesh.quaternion.setFromUnitVectors(UP, dir);
+  scene.add(mesh);
+  enemyRockets.push({mesh,vel:dir.multiplyScalar(24),life:4,t:0});
+  noise(.3,1200,.2,'bandpass');
+}
+
+// ---------- sterowanie ----------
+const keys = {};
+const map = {ArrowLeft:'L',KeyA:'L',ArrowRight:'R',KeyD:'R',ArrowUp:'U',KeyW:'U',ArrowDown:'D',KeyS:'D'};
+addEventListener('keydown',e=>{
+  if(map[e.code]) {keys[map[e.code]]=true; e.preventDefault();}
+  if(e.code==='Space'){ e.preventDefault(); keys.F=true; }
+});
+addEventListener('keyup',e=>{
+  if(map[e.code]) keys[map[e.code]]=false;
+  if(e.code==='Space') keys.F=false;
+});
+for(const [id,k] of [['bF','F']]){
+  const el = document.getElementById(id);
+  const on = e=>{e.preventDefault(); keys[k]=true; el.classList.add('on'); audio();};
+  const off= e=>{e.preventDefault(); keys[k]=false; el.classList.remove('on');};
+  el.addEventListener('pointerdown',on);
+  for(const ev of ['pointerup','pointerleave','pointercancel']) el.addEventListener(ev,off);
+}
+// gałka (joystick) dla ekranów dotykowych: ląduje tam, gdzie dotkniesz lewą stronę ekranu
+const joy = {x:0,y:0};
+{
+  const zone = document.getElementById('joyZone'), base = document.getElementById('joyBase'), knob = document.getElementById('joyKnob');
+  const R = 75, HALF = 85;
+  let jid = null, cx = 0, cy = 0;
+  const reset = ()=>{ jid=null; joy.x=joy.y=0; knob.style.transform=''; base.style.left='40px'; base.style.top='auto'; base.style.bottom='50px'; base.style.opacity=''; };
+  const move = e=>{
+    let dx=e.clientX-cx, dy=e.clientY-cy; const d=Math.hypot(dx,dy);
+    if(d>R){ dx*=R/d; dy*=R/d; }
+    knob.style.transform = `translate(${dx}px,${dy}px)`;
+    const nx=dx/R, ny=-dy/R, m=Math.hypot(nx,ny);
+    if(m<.15){ joy.x=joy.y=0; } else { const k=(m-.15)/.85/m; joy.x=nx*k; joy.y=ny*k; }
+  };
+  zone.addEventListener('pointerdown',e=>{
+    e.preventDefault(); if(jid!==null) return;
+    audio(); jid = e.pointerId; zone.setPointerCapture(jid);
+    cx = clamp(e.clientX, HALF+10, innerWidth-HALF-10); cy = clamp(e.clientY, HALF+10, innerHeight-HALF-10);
+    base.style.left=(cx-HALF)+'px'; base.style.top=(cy-HALF)+'px'; base.style.bottom='auto'; base.style.opacity='1';
+    move(e);
+  });
+  zone.addEventListener('pointermove',e=>{ if(e.pointerId===jid){ e.preventDefault(); move(e); } });
+  for(const ev of ['pointerup','pointercancel','lostpointercapture']) zone.addEventListener(ev,e=>{ if(e.pointerId===jid) reset(); });
+  addEventListener('contextmenu',e=>e.preventDefault());
+}
+if(matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window) document.body.classList.add('touch');
+
+// ---------- interfejs i przebieg gry ----------
+let score = 0, started = false, transition = false, lvl = 0;
+const hud = document.getElementById('hud'), msg = document.getElementById('msg');
+function updateHud(){ hud.innerHTML = `Poziom ${lvl+1}/${LEVELS.length}<br>⭐ ${score} &nbsp; 🎯 ${enemies.length}`; }
+let msgTimer;
+function say(t,ms){ msg.textContent=t; msg.style.opacity=1; clearTimeout(msgTimer); msgTimer=setTimeout(()=>msg.style.opacity=0,ms); }
+
+function buildLevel(i){
+  lvl = i; transition = false;
+  const L = LEVELS[i];
+  for(const r of rockets) scene.remove(r.mesh);
+  for(const r of enemyRockets) scene.remove(r.mesh);
+  for(const e of enemies) scene.remove(e.mesh);
+  rockets.length = enemyRockets.length = 0; enemies = [];
+  scene.background.setHex(L.sky); scene.fog.color.setHex(L.sky);
+  rebuildGround(L); buildProps(L);
+  Object.assign(P,{x:0,z:0,h:0,speed:0,vx:0,vz:0,pitch:0,roll:0});
+  camPos.set(0,8,-13);
+  spawnEnemies(L);
+  updateHud();
+  say(`Poziom ${i+1}: ${L.name}`, 2200);
+}
+function nextLevel(){ buildLevel(lvl+1); }
+function win(){
+  started = false;
+  document.getElementById('sTitle').textContent = '🏆 Wygrałeś!';
+  document.getElementById('sText').innerHTML = `Zniszczyłeś ${score} czołgów!<br>Jesteś mistrzem.`;
+  document.getElementById('go').textContent = 'GRAJ JESZCZE RAZ';
+  document.getElementById('start').style.display = 'flex';
+}
+document.getElementById('go').onclick = ()=>{
+  document.getElementById('start').style.display='none';
+  audio(); initEngine(); started = true; score = 0; buildLevel(0);
+};
+
+// ---------- pętla ----------
+const clock = new THREE.Clock();
+const camPos = new THREE.Vector3(0,8,-13);
+const FWD = new THREE.Vector3();
+function loop(){
+  requestAnimationFrame(loop);
+  const dt = Math.min(clock.getDelta(), .05);
+  cooldown -= dt;
+  const L = LEVELS[lvl];
+
+  if(started){
+    // --- ruch gracza z bezwładnością ---
+    const steer = clamp((keys.L?1:0) - (keys.R?1:0) - joy.x, -1, 1);
+    drive = clamp((keys.U?1:0) - (keys.D?1:0) + joy.y, -1, 1);
+    P.h += steer * 1.8 * dt;
+    const slope = (player.rotation.x) ; // pitch (ujemny = pod górę)
+    const hill = clamp(1 + slope*1.6*(P.speed>=0?1:-1), .45, 1.35);
+    const target = drive * 14 * (drive ? hill : 1);
+    const acc = Math.abs(drive)>.05 ? 11 : 20;                 // rozpędzanie wolniejsze niż hamowanie
+    P.speed += clamp(target-P.speed, -acc*dt, acc*dt);
+    // pęd z odrzutu zanika
+    const damp = Math.exp(-3*dt); P.vx *= damp; P.vz *= damp;
+    P.x += (Math.sin(P.h)*P.speed + P.vx)*dt;
+    P.z += (Math.cos(P.h)*P.speed + P.vz)*dt;
+    // kolizje z przeszkodami i wrogami: wypychanie + wyhamowanie
+    const bump = (cx,cz,min)=>{
+      const dx=P.x-cx, dz=P.z-cz, d=Math.hypot(dx,dz);
+      if(d<min && d>0){
+        P.x=cx+dx/d*min; P.z=cz+dz/d*min;
+        const nx=dx/d, nz=dz/d, vn = (Math.sin(P.h)*P.speed+P.vx)*nx + (Math.cos(P.h)*P.speed+P.vz)*nz;
+        if(vn<0){ P.speed*=.5; P.vx -= nx*vn*.8; P.vz -= nz*vn*.8; }
+      }
+    };
+    for(const o of obstacles) bump(o.x,o.z,o.r+2.2);
+    for(const e of enemies) bump(e.x,e.z,e.r+2.2);
+    P.x = clamp(P.x,-WORLD,WORLD); P.z = clamp(P.z,-WORLD,WORLD);
+    if(keys.F) fire();
+    if(Math.abs(P.speed)>3 && Math.random()<.25)
+      puff(new THREE.Vector3(P.x-Math.sin(P.h)*2.6,player.position.y+.4,P.z-Math.cos(P.h)*2.6), .6, L.theme==='snow'?0xeeeeee:0x8a7a5a, .8, 2.5);
+
+    // --- wrogowie ---
+    const tt = performance.now()/1000;
+    for(const e of enemies){
+      if(L.move){
+        let dx=e.wx-e.x, dz=e.wz-e.z;
+        if(Math.hypot(dx,dz)<4){ e.wx=rnd(-WORLD,WORLD); e.wz=rnd(-WORLD,WORLD); dx=e.wx-e.x; dz=e.wz-e.z; }
+        const diff = wrap(Math.atan2(dx,dz)-e.h);
+        e.h += clamp(diff,-1*dt,1*dt);
+        if(Math.abs(diff)<.7){ e.x += Math.sin(e.h)*L.move*dt; e.z += Math.cos(e.h)*L.move*dt; }
+      }
+      for(const o of obstacles){
+        const dx=e.x-o.x, dz=e.z-o.z, d=Math.hypot(dx,dz), min=o.r+2.4;
+        if(d<min && d>0){ e.x=o.x+dx/d*min; e.z=o.z+dz/d*min; e.wx=rnd(-WORLD,WORLD); e.wz=rnd(-WORLD,WORLD); }
+      }
+      for(const f of enemies){ if(f===e) continue;
+        const dx=e.x-f.x, dz=e.z-f.z, d=Math.hypot(dx,dz);
+        if(d<5 && d>0){ e.x+=dx/d*(5-d)*.5; e.z+=dz/d*(5-d)*.5; }
+      }
+      { const dx=e.x-P.x, dz=e.z-P.z, d=Math.hypot(dx,dz); if(d<5 && d>0){ e.x+=dx/d*(5-d); e.z+=dz/d*(5-d); } }
+      e.x = clamp(e.x,-WORLD,WORLD); e.z = clamp(e.z,-WORLD,WORLD);
+      settle(e,e.mesh,dt);
+      const dist = Math.hypot(P.x-e.x,P.z-e.z);
+      if(L.shoot){
+        const want = clamp(wrap(Math.atan2(P.x-e.x,P.z-e.z)-e.h),-1.3,1.3);
+        e.turY += (want-e.turY)*Math.min(1,dt*3);
+        e.mesh.userData.turret.rotation.y = e.turY;
+        e.cool -= dt;
+        if(e.cool<=0 && dist<65 && dist>10 && !transition){ enemyFire(e); e.cool = L.shoot*rnd(.8,1.4); }
+      } else e.mesh.userData.turret.rotation.y = Math.sin(tt*.8+e.phase)*.5;
+    }
+  }
+  updateEngine(P.speed, Math.abs(drive)>.05, started);
+  settle(P, player, dt);
+
+  updateRockets(dt);
+  updateFx(dt);
+  updateFalling(dt);
+
+  // --- kamera za czołgiem, nad terenem, z drganiem ---
+  FWD.set(Math.sin(P.h),0,Math.cos(P.h));
+  const want = new THREE.Vector3(P.x,0,P.z).addScaledVector(FWD,-13);
+  want.y = Math.max(player.position.y+6.5, H(want.x,want.z)+3);
+  camPos.lerp(want, Math.min(1,dt*5));
+  camera.position.copy(camPos);
+  if(shake>0){
+    camera.position.x += rnd(-1,1)*shake; camera.position.y += rnd(-1,1)*shake; camera.position.z += rnd(-1,1)*shake;
+    shake = Math.max(0, shake-dt*1.8);
+  }
+  camera.lookAt(P.x+FWD.x*12, player.position.y+1.5, P.z+FWD.z*12);
+
+  sun.position.set(P.x+60,90,P.z+30); sun.target.position.set(P.x,0,P.z);
+  renderer.render(scene,camera);
+}
+buildLevel(0);
+loop();
+</script>
+</body>
+</html>
